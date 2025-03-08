@@ -2,18 +2,18 @@
 {
     public class GpsData
     {
-        public string Time;
+        public string Time { get; set; }
 
-        public double Latitude;
+        public double Latitude { get; set; }
 
-        public double Longitude;
+        public double Longitude { get; set; }
 
-        public string FixQuality;
+        public string FixQuality { get; set; }
 
-        public string NumSatellites;
+        public string NumSatellites { get; set; }
 
-        public string HDOP;
+        public string HDOP { get; set; }
 
-        public string Altitude;
+        public string Altitude { get; set; }
     }
 }
