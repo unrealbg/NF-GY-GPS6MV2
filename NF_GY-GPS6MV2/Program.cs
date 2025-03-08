@@ -2,6 +2,7 @@
 {
     using nanoFramework.Networking;
     using nanoFramework.M2Mqtt;
+    using nanoFramework.Json;
     using System;
     using System.IO.Ports;
     using System.Text;
@@ -23,9 +24,7 @@
         public static void Main()
         {
             ConnectToWiFi();
-
             InitializeMqtt();
-
             InitializeSerial();
 
             _displayTimer = new Timer(DisplayTimerCallback, null, 60000, 60000);
@@ -57,7 +56,6 @@
                 const string mqttPassword = "YourMqttPassword";
 
                 _mqttClient = new MqttClient(MqttBrokerAddress);
-
                 _mqttClient.Connect(MqttClientId, mqttUser, mqttPassword);
 
                 if (_mqttClient.IsConnected)
@@ -94,6 +92,7 @@
         {
             if (_lastGpsData != null)
             {
+                // 1) Текстово съобщение на конзолата
                 string summary =
                     "GPS Data Summary:\r\n" +
                     "Time: " + _lastGpsData.Time + "\r\n" +
@@ -106,15 +105,17 @@
 
                 Console.WriteLine(summary);
 
+                string jsonData = JsonConvert.SerializeObject(_lastGpsData);
+
                 if (_mqttClient != null && _mqttClient.IsConnected)
                 {
                     try
                     {
                         _mqttClient.Publish(
                             MqttTopic,
-                            Encoding.UTF8.GetBytes(summary));
+                            Encoding.UTF8.GetBytes(jsonData));
 
-                        Console.WriteLine("Published GPS data to MQTT topic: " + MqttTopic);
+                        Console.WriteLine("Published GPS data as JSON to MQTT topic: " + MqttTopic);
                     }
                     catch (Exception ex)
                     {
