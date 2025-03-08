@@ -1,9 +1,10 @@
 ﻿namespace NF_GY_GPS6MV2
 {
     using nanoFramework.Networking;
-
+    using nanoFramework.M2Mqtt;
     using System;
     using System.IO.Ports;
+    using System.Text;
     using System.Threading;
 
     public class Program
@@ -13,9 +14,17 @@
         private static GpsData _lastGpsData;
         private static Timer _displayTimer;
 
+        private static MqttClient _mqttClient;
+
+        private const string MqttBrokerAddress = "YourMqttBroker";
+        private const string MqttTopic = "gps/coords";
+        private const string MqttClientId = "MyGpsClient";
+
         public static void Main()
         {
             ConnectToWiFi();
+
+            InitializeMqtt();
 
             InitializeSerial();
 
@@ -37,6 +46,32 @@
             else
             {
                 Console.WriteLine("WiFi connection failed");
+            }
+        }
+
+        private static void InitializeMqtt()
+        {
+            try
+            {
+                const string mqttUser = "YourMqttUser";
+                const string mqttPassword = "YourMqttPassword";
+
+                _mqttClient = new MqttClient(MqttBrokerAddress);
+
+                _mqttClient.Connect(MqttClientId, mqttUser, mqttPassword);
+
+                if (_mqttClient.IsConnected)
+                {
+                    Console.WriteLine("Connected to MQTT broker: " + MqttBrokerAddress);
+                }
+                else
+                {
+                    Console.WriteLine("MQTT connection failed");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error initializing MQTT: " + ex.Message);
             }
         }
 
@@ -70,6 +105,26 @@
                     "Altitude: " + _lastGpsData.Altitude + "\r\n";
 
                 Console.WriteLine(summary);
+
+                if (_mqttClient != null && _mqttClient.IsConnected)
+                {
+                    try
+                    {
+                        _mqttClient.Publish(
+                            MqttTopic,
+                            Encoding.UTF8.GetBytes(summary));
+
+                        Console.WriteLine("Published GPS data to MQTT topic: " + MqttTopic);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Error publishing to MQTT: " + ex.Message);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("MQTT client not connected");
+                }
             }
             else
             {
@@ -185,8 +240,6 @@
                     HDOP = hdop,
                     Altitude = altitude
                 };
-
-                // Console.WriteLine("GNGGA Parsed Data: Time: " + time + " Lat: " + latDegrees + " Lon: " + lonDegrees);
             }
             catch (Exception ex)
             {
