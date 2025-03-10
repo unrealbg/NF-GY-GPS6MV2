@@ -21,10 +21,10 @@
 
             var mqttService = new MqttService(MqttBrokerAddress, MqttClientId, MqttUser, MqttPassword);
 
-            var gpsService = new GpsService("COM2", 9600, 16, 17);
+            var gpsService = new GpsService(GpsComPort, GpsBaudRate, GpsRxPin, GpsTxPin);
             gpsService.Start();
 
-            Thread.Sleep(10_000);
+            Thread.Sleep(GpsStartupDelayMs);
 
             if (gpsService.LastGpsData != null)
             {
@@ -38,10 +38,10 @@
                 Console.WriteLine("No GPS data available");
             }
 
-            Thread.Sleep(3000);
+            Thread.Sleep(PostGpsDataDelayMs);
 
             Console.WriteLine("Going to deep sleep for 1 minute...");
-            var deepSleepDuration = new TimeSpan(0, 1, 0);
+            var deepSleepDuration = new TimeSpan(0, DeepSleepMinutes, 0);
             Sleep.EnableWakeupByTimer(deepSleepDuration);
             Sleep.StartDeepSleep();
         }
