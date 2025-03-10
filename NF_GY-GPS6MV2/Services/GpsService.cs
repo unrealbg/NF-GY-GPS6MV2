@@ -29,7 +29,7 @@
 
             // Initialize serial port
             _serialPort = new SerialPort(comPort, baudRate, Parity.None, 8, StopBits.One);
-            _serialPort.DataReceived += SerialPort_DataReceived;
+            _serialPort.DataReceived += this.SerialPort_DataReceived;
         }
 
         /// <summary>
