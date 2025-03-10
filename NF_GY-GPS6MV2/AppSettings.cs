@@ -14,5 +14,16 @@
         // MQTT credentials
         public const string MqttUser = "mqttUser";
         public const string MqttPassword = "mqttPass";
+
+        // GPS settings
+        public const string GpsComPort = "COM2";
+        public const int GpsBaudRate = 9600;
+        public const int GpsRxPin = 16;
+        public const int GpsTxPin = 17;
+
+        // Timing settings
+        public const int GpsStartupDelayMs = 10000;
+        public const int PostGpsDataDelayMs = 3000;
+        public const int DeepSleepMinutes = 1;
     }
 }
