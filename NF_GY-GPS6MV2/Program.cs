@@ -3,9 +3,7 @@
     using System;
     using System.Threading;
 
-    using nanoFramework.Hardware.Esp32;
     using nanoFramework.Json;
-    using nanoFramework.Networking;
 
     using NF_GY_GPS6MV2.Services;
 
@@ -13,18 +11,38 @@
 
     public class Program
     {
+        private static ConnectionService connectionService;
+        private static MqttService mqttService;
+        private static GpsService gpsService;
+        private static Timer repeatingTimer;
+
         public static void Main()
         {
-            bool success = WifiNetworkHelper.ConnectDhcp(WifiSsid, WifiPassword, requiresDateTime: false);
+            Console.WriteLine("Starting GPS tracker...");
 
-            Console.WriteLine(success ? "Connected to WiFi network successfully" : "WiFi connection failed");
+            Thread.Sleep(30000);
 
-            var mqttService = new MqttService(MqttBrokerAddress, MqttClientId, MqttUser, MqttPassword);
+            connectionService = new ConnectionService();
+            connectionService.ConnectionLost += OnConnectionLost;
+            connectionService.ConnectionRestored += OnConnectionRestored;
 
-            var gpsService = new GpsService(GpsComPort, GpsBaudRate, GpsRxPin, GpsTxPin);
+            connectionService.Connect();
+
+            Console.WriteLine("WiFi connected. IP: " + connectionService.GetIpAddress());
+
+            mqttService = new MqttService(MqttBrokerAddress, MqttClientId, MqttUser, MqttPassword);
+
+            gpsService = new GpsService(GpsComPort, GpsBaudRate, GpsRxPin, GpsTxPin);
             gpsService.Start();
 
-            Thread.Sleep(GpsStartupDelayMs);
+            repeatingTimer = new Timer(TimerTick, null, 0, PostGpsDataDelayMs);
+
+            Thread.Sleep(Timeout.Infinite);
+        }
+
+        private static void TimerTick(object state)
+        {
+            connectionService.CheckConnection();
 
             if (gpsService.LastGpsData != null)
             {
@@ -37,13 +55,16 @@
             {
                 Console.WriteLine("No GPS data available");
             }
+        }
 
-            Thread.Sleep(PostGpsDataDelayMs);
+        private static void OnConnectionLost(object sender, EventArgs e)
+        {
+            Console.WriteLine("WiFi connection lost! Will attempt to reconnect...");
+        }
 
-            Console.WriteLine("Going to deep sleep for 1 minute...");
-            var deepSleepDuration = new TimeSpan(0, DeepSleepMinutes, 0);
-            Sleep.EnableWakeupByTimer(deepSleepDuration);
-            Sleep.StartDeepSleep();
+        private static void OnConnectionRestored(object sender, EventArgs e)
+        {
+            Console.WriteLine("WiFi connection restored. IP: " + connectionService.GetIpAddress());
         }
     }
 }
