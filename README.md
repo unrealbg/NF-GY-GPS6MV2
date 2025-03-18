@@ -53,30 +53,53 @@ Below is an example wiring between the ESP32 and the GY-GPS6MV2 module:
      - `WifiSsid` and `WifiPassword` for your Wi-Fi network  
      - `MqttBrokerAddress`, `MqttUser`, `MqttPassword`, etc., for your MQTT broker  
      - `GpsComPort`, `GpsBaudRate`, `GpsRxPin`, and `GpsTxPin` if needed
+   - **Timing Settings:**  
+     The configuration constants such as `GpsStartupDelayMs`, `PostGpsDataDelayMs`, and `DeepSleepMinutes` (intended for future deep sleep implementation) allow you to fine-tune the timing behavior. Currently, the deep sleep is simulated via a delay.
 
 4. **Deploy to the ESP32**  
    - Connect your board via USB and ensure the correct target (ESP32) is selected in the **nanoFramework Device Explorer** in Visual Studio.  
    - Press **F5** (or **Deploy**) to build and flash the firmware.
 
-5. **Monitor the output**  
-   - Open the **Debug Output** window in Visual Studio or use a serial terminal on the appropriate COM port.  
+5. **Monitor the output:**
+
+   - Open the Debug Output window in Visual Studio or use a serial terminal on the appropriate COM port.
    - The device will:
-     1. Connect to Wi-Fi  
-     2. Read GPS data (GNGGA sentences)  
-     3. Publish JSON-formatted coordinates to the MQTT broker  
-     4. Enter deep sleep for 1 minute (configurable in `AppSettings.cs`)  
-     5. Wake up and repeat the cycle
+     1. Connect to Wi-Fi.
+     2. Read GPS data (GNGGA sentences).
+     3. Publish JSON-formatted coordinates to the MQTT broker.
+     4. Wait for the configured interval (simulating deep sleep) before repeating the cycle.
+
+## Example Output
+
+When the device sends GPS data, it publishes a JSON message similar to the following:
+
+```json
+{
+  "NumSatellites": "10",
+  "Latitude": 42.69751,
+  "Date": "2025-03-16T20:01:08.1760350Z",
+  "SpeedKmh": 0,
+  "HDOP": "1.1",
+  "Altitude": "95.8",
+  "Longitude": 23.32415,
+  "Time": "200038.000",
+  "FixQuality": "1"
+}
+```
+- This JSON includes the number of satellites, coordinates (latitude and longitude), date and time of the GPS fix, speed in km/h, horizontal dilution of precision (HDOP), altitude, and fix quality.
 
 ## Project Structure
 
 - **`AppSettings.cs`**  
   Holds constants for Wi-Fi, MQTT, and GPS settings (pins, baud rate, etc.).
 - **`Program.cs`**  
-  Main entry point: connects to Wi-Fi, initializes `GpsService` and `MqttService`, sends data, then goes into deep sleep.
+  Main entry point: connects to Wi-Fi, initializes the services (GpsService, MqttService, and ConnectionService), sends data, and then waits before starting a new cycle.
 - **`GpsService.cs`**  
   Reads from the serial port (COM2) and parses GNGGA messages into a `GpsData` object.
 - **`MqttService.cs`**  
   Manages MQTT publishing to the specified broker/topic.
+- **`ConnectionService.cs`
+  Handles Wi-Fi connectivity, including connection establishment and reconnection attempts.
 - **`Models/GpsData.cs`**  
   A simple class holding the parsed GPS data.
 
@@ -85,6 +108,7 @@ Below is an example wiring between the ESP32 and the GY-GPS6MV2 module:
 - **Adjust timing**: If you need more time to get a GPS fix or want to publish data at different intervals, modify the `Thread.Sleep` values in `Program.cs` or move them to `AppSettings.cs`.
 - **Change pins**: If you use different GPIO pins, update `GpsRxPin` and `GpsTxPin` in `AppSettings.cs` and adjust `Configuration.SetPinFunction()` in `GpsService.cs`.
 - **Logging**: Use `Console.WriteLine` (or `Debug.WriteLine`) to see messages in the debug console or a serial terminal.
+- **MQTT Testing**: If you do not have your own MQTT broker, you can test using a public broker such as test.mosquitto.org.
 
 ## Contributing
 
