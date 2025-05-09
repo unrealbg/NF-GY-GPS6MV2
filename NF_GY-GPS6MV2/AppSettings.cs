@@ -23,7 +23,7 @@
 
         // Timing settings
         public const int GpsStartupDelayMs = 10000;
-        public const int PostGpsDataDelayMs = 30000;
+        public const int PostGpsDataDelayMs = 5000;
         public const int DeepSleepMinutes = 1;
     }
 }

@@ -18,6 +18,7 @@
         private const int MAX_ERROR_COUNT = 10;
         private const int ERROR_RESET_INTERVAL = 60000;
         private Timer _errorResetTimer;
+        private double _lastSpeedKmh = 0;
 
         public GpsData LastGpsData { get; private set; }
 
@@ -94,7 +95,7 @@
                 if (string.IsNullOrEmpty(data))
                 {
                     return;
-                }
+                } 
 
                 _buffer += data;
 
@@ -228,31 +229,25 @@
                 double latDegrees = 0;
                 double lonDegrees = 0;
 
-                if (latitude.Length >= 2)
+                if (latitude.Length >= 2 &&
+                    int.TryParse(latitude.Substring(0, 2), out int latDeg) &&
+                    double.TryParse(latitude.Substring(2), out double latMin))
                 {
-                    int latDeg;
-                    if (int.TryParse(latitude.Substring(0, 2), out latDeg))
+                    latDegrees = latDeg + latMin / 60.0;
+                    if (latDir == "S")
                     {
-                        double latMin;
-                        if (double.TryParse(latitude.Substring(2), out latMin))
-                        {
-                            latDegrees = latDeg + latMin / 60.0;
-                            if (latDir == "S") latDegrees = -latDegrees;
-                        }
+                        latDegrees = -latDegrees;
                     }
                 }
 
-                if (longitude.Length >= 3)
+                if (longitude.Length >= 3 &&
+                    int.TryParse(longitude.Substring(0, 3), out int lonDeg) &&
+                    double.TryParse(longitude.Substring(3), out double lonMin))
                 {
-                    int lonDeg;
-                    if (int.TryParse(longitude.Substring(0, 3), out lonDeg))
+                    lonDegrees = lonDeg + lonMin / 60.0;
+                    if (lonDir == "W")
                     {
-                        double lonMin;
-                        if (double.TryParse(longitude.Substring(3), out lonMin))
-                        {
-                            lonDegrees = lonDeg + lonMin / 60.0;
-                            if (lonDir == "W") lonDegrees = -lonDegrees;
-                        }
+                        lonDegrees = -lonDegrees;
                     }
                 }
 
@@ -264,7 +259,9 @@
                     FixQuality = fixQuality,
                     NumSatellites = numSatellites,
                     HDOP = hdop,
-                    Altitude = altitude
+                    Altitude = altitude,
+                    SpeedKmh = _lastSpeedKmh,
+                    IsValid = true
                 };
 
                 this.LastGpsData = newData;
@@ -290,18 +287,10 @@
                 }
 
                 string speedKmhStr = parts[7];
-                double speedKmh = 0;
                 if (!string.IsNullOrEmpty(speedKmhStr))
                 {
-                    double.TryParse(speedKmhStr, out speedKmh);
+                    double.TryParse(speedKmhStr, out _lastSpeedKmh);
                 }
-
-                if (this.LastGpsData == null)
-                {
-                    this.LastGpsData = new GpsData();
-                }
-
-                this.LastGpsData.SpeedKmh = speedKmh;
 
                 _errorCount = 0;
             }
@@ -344,10 +333,7 @@
 
         protected virtual void Dispose(bool disposing)
         {
-            if (_disposed)
-            {
-                return;
-            }
+            if (_disposed) return;
 
             if (disposing)
             {
@@ -359,21 +345,14 @@
 
                 if (_serialPort != null)
                 {
-                    try
-                    {
-                        if (_serialPort.IsOpen)
-                        {
-                            _serialPort.Close();
-                        }
+                    _serialPort.DataReceived -= SerialPort_DataReceived;
 
-                        _serialPort.DataReceived -= SerialPort_DataReceived;
-                        _serialPort.Dispose();
-                    }
-                    catch (Exception ex)
+                    if (_serialPort.IsOpen)
                     {
-                        Console.WriteLine($"Error disposing serial port: {ex.Message}");
+                        _serialPort.Close();
                     }
 
+                    _serialPort.Dispose();
                     _serialPort = null;
                 }
             }

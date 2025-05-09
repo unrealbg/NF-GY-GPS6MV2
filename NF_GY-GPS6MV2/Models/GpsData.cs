@@ -21,5 +21,7 @@
         public double SpeedKmh { get; set; }
 
         public DateTime Date { get; set; } = DateTime.UtcNow;
+
+        public bool IsValid { get; set; } = false;
     }
 }
