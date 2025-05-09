@@ -20,7 +20,7 @@
         {
             Console.WriteLine("Starting GPS tracker...");
 
-            Thread.Sleep(30000);
+            Thread.Sleep(10000);
 
             connectionService = new ConnectionService();
             connectionService.ConnectionLost += OnConnectionLost;
@@ -44,16 +44,20 @@
         {
             connectionService.CheckConnection();
 
-            if (gpsService.LastGpsData != null)
+            var data = gpsService.LastGpsData;
+
+            if (data != null && data.IsValid)
             {
-                string jsonData = JsonConvert.SerializeObject(gpsService.LastGpsData);
+                string jsonData = JsonConvert.SerializeObject(data);
                 Console.WriteLine("GPS data: " + jsonData);
 
                 mqttService.Publish(MqttTopic, jsonData);
             }
             else
             {
-                Console.WriteLine("No GPS data available");
+                Console.WriteLine("Invalid or missing GPS data, skipping publish.");
+                Thread.Sleep(10000);
+                mqttService.Publish("gps/error", $"Invalid or missing GPS data: {DateTime.UtcNow}");
             }
         }
 
