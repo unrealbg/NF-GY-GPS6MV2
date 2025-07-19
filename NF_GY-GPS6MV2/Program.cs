@@ -5,59 +5,88 @@
 
     using nanoFramework.Json;
 
+    using NF_GY_GPS6MV2.Models;
     using NF_GY_GPS6MV2.Services;
 
     using static AppSettings;
 
     public class Program
     {
-        private static ConnectionService connectionService;
-        private static MqttService mqttService;
-        private static GpsService gpsService;
-        private static Timer repeatingTimer;
+        private static ConnectionService _connectionService;
+        private static MqttService _mqttService;
+        private static GpsService _gpsService;
+        private static Timer _repeatingTimer;
+        private static ManualResetEvent _exitEvent = new ManualResetEvent(false);
+        private static readonly object _gpsDataLock = new object();
+        private static int _gpsErrorPublishCounter = 0;
+        private const int MaxGpsErrorPublishes = 5;
+        private static DateTime _lastGpsErrorPublish = DateTime.MinValue;
 
         public static void Main()
         {
-            Console.WriteLine("Starting GPS tracker...");
+            try
+            {
+                Console.WriteLine("Starting GPS tracker...");
+                Thread.Sleep(GpsStartupDelayMs);
 
-            Thread.Sleep(10000);
+                _connectionService = new ConnectionService();
+                _connectionService.ConnectionLost += OnConnectionLost;
+                _connectionService.ConnectionRestored += OnConnectionRestored;
+                _connectionService.Connect();
+                Console.WriteLine("WiFi connected. IP: " + _connectionService.GetIpAddress());
 
-            connectionService = new ConnectionService();
-            connectionService.ConnectionLost += OnConnectionLost;
-            connectionService.ConnectionRestored += OnConnectionRestored;
+                _mqttService = new MqttService(MqttBrokerAddress, MqttClientId, MqttUser, MqttPassword);
+                _gpsService = new GpsService(GpsComPort, GpsBaudRate, GpsRxPin, GpsTxPin);
+                _gpsService.Start();
 
-            connectionService.Connect();
+                _repeatingTimer = new Timer(TimerTick, null, 0, PostGpsDataDelayMs);
 
-            Console.WriteLine("WiFi connected. IP: " + connectionService.GetIpAddress());
-
-            mqttService = new MqttService(MqttBrokerAddress, MqttClientId, MqttUser, MqttPassword);
-
-            gpsService = new GpsService(GpsComPort, GpsBaudRate, GpsRxPin, GpsTxPin);
-            gpsService.Start();
-
-            repeatingTimer = new Timer(TimerTick, null, 0, PostGpsDataDelayMs);
-
-            Thread.Sleep(Timeout.Infinite);
+                _exitEvent.WaitOne();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Fatal error: {ex.Message}\n{ex.StackTrace}");
+            }
+            finally
+            {
+                _repeatingTimer?.Dispose();
+                _gpsService?.Dispose();
+                _mqttService?.Stop();
+            }
         }
 
         private static void TimerTick(object state)
         {
-            connectionService.CheckConnection();
-
-            var data = gpsService.LastGpsData;
-
-            if (data != null && data.IsValid)
+            try
             {
-                string jsonData = JsonConvert.SerializeObject(data);
-                Console.WriteLine("GPS data: " + jsonData);
+                _connectionService.CheckConnection();
+                GpsData data;
+                lock (_gpsDataLock)
+                {
+                    data = _gpsService.LastGpsData;
+                }
+                if (data != null && data.IsValid)
+                {
+                    string jsonData = JsonConvert.SerializeObject(data);
+                    Console.WriteLine("GPS data: " + jsonData);
+                    _mqttService.Publish(MqttTopic, jsonData);
+                    _gpsErrorPublishCounter = 0;
+                }
+                else
+                {
+                    Console.WriteLine("Invalid or missing GPS data, skipping publish.");
 
-                mqttService.Publish(MqttTopic, jsonData);
+                    if (_gpsErrorPublishCounter < MaxGpsErrorPublishes || (DateTime.UtcNow - _lastGpsErrorPublish).TotalMinutes > 10)
+                    {
+                        _mqttService.Publish("gps/error", $"Invalid or missing GPS data: {DateTime.UtcNow}");
+                        _gpsErrorPublishCounter++;
+                        _lastGpsErrorPublish = DateTime.UtcNow;
+                    }
+                }
             }
-            else
+            catch (Exception ex)
             {
-                Console.WriteLine("Invalid or missing GPS data, skipping publish.");
-                Thread.Sleep(10000);
-                mqttService.Publish("gps/error", $"Invalid or missing GPS data: {DateTime.UtcNow}");
+                Console.WriteLine($"Error in TimerTick: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
@@ -68,7 +97,7 @@
 
         private static void OnConnectionRestored(object sender, EventArgs e)
         {
-            Console.WriteLine("WiFi connection restored. IP: " + connectionService.GetIpAddress());
+            Console.WriteLine("WiFi connection restored. IP: " + _connectionService.GetIpAddress());
         }
     }
 }
