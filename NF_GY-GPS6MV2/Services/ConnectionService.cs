@@ -29,11 +29,18 @@
         {
             try
             {
-                _wifiAdapter = WifiAdapter.FindAllAdapters()[0];
+                var adapters = WifiAdapter.FindAllAdapters();
+                if (adapters == null || adapters.Length == 0)
+                {
+                    Console.WriteLine("No WiFi adapters found!");
+                    throw new InvalidOperationException("No WiFi adapters found!");
+                }
+                _wifiAdapter = adapters[0];
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to initialize WiFi adapter: {ex.Message}");
+                Console.WriteLine($"Failed to initialize WiFi adapter: {ex.Message}\n{ex.StackTrace}");
+                throw;
             }
         }
 
@@ -69,7 +76,7 @@
             if (_wifiAdapter == null)
             {
                 Console.WriteLine("Cannot connect: WiFi adapter not available");
-                return;
+                throw new InvalidOperationException("WiFi adapter not available");
             }
 
             if (this.IsAlreadyConnected(out var currentIp))
@@ -108,7 +115,7 @@
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Connection error: {ex.Message}");
+                        Console.WriteLine($"Connection error: {ex.Message}\n{ex.StackTrace}");
                     }
 
                     Thread.Sleep(RECONNECT_DELAY_MS);
@@ -134,6 +141,10 @@
                 Console.WriteLine($"Failed to connect after {MAX_CONNECTION_ATTEMPTS} attempts. Sleeping for 1 minute before retrying...");
                 Thread.Sleep(60000);
             }
+            lock (_connectionLock)
+            {
+                _isConnectionInProgress = false;
+            }
         }
 
         /// <summary>
@@ -141,17 +152,27 @@
         /// </summary>
         public void CheckConnection()
         {
-            if (_isConnectionInProgress)
+            lock (_connectionLock)
             {
-                return;
+                if (_isConnectionInProgress)
+                {
+                    return;
+                }
+                _isConnectionInProgress = true;
             }
 
             if (!this.IsAlreadyConnected(out _))
             {
-                _isConnectionInProgress = true;
                 this.RaiseConnectionLost();
                 Console.WriteLine("Lost network connection. Attempting to reconnect...");
                 this.Connect();
+            }
+            else
+            {
+                lock (_connectionLock)
+                {
+                    _isConnectionInProgress = false;
+                }
             }
         }
 
@@ -193,7 +214,7 @@
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Network interface error: {ex.Message}");
+                Console.WriteLine($"Network interface error: {ex.Message}\n{ex.StackTrace}");
                 return false;
             }
         }
