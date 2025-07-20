@@ -205,24 +205,25 @@
             try
             {
                 string[] parts = message.Split(',');
-                if (parts.Length < 15)
+                if (parts.Length < 10)
                 {
-                    Console.WriteLine("Invalid GNGGA message format");
+                    Console.WriteLine($"GNGGA message too short: '{message}'");
                     return;
                 }
 
-                string time = parts[1];
-                string latitude = parts[2];
-                string latDir = parts[3];
-                string longitude = parts[4];
-                string lonDir = parts[5];
-                string fixQuality = parts[6];
-                string numSatellites = parts[7];
-                string hdop = parts[8];
-                string altitude = parts[9];
+                string time = parts.Length > 1 ? parts[1] : string.Empty;
+                string latitude = parts.Length > 2 ? parts[2] : string.Empty;
+                string latDir = parts.Length > 3 ? parts[3] : string.Empty;
+                string longitude = parts.Length > 4 ? parts[4] : string.Empty;
+                string lonDir = parts.Length > 5 ? parts[5] : string.Empty;
+                string fixQuality = parts.Length > 6 ? parts[6] : string.Empty;
+                string numSatellites = parts.Length > 7 ? parts[7] : string.Empty;
+                string hdop = parts.Length > 8 ? parts[8] : string.Empty;
+                string altitude = parts.Length > 9 ? parts[9] : string.Empty;
 
-                if (fixQuality == "0" || string.IsNullOrEmpty(latitude) || string.IsNullOrEmpty(longitude))
+                if (string.IsNullOrEmpty(fixQuality) || fixQuality == "0" || string.IsNullOrEmpty(latitude) || string.IsNullOrEmpty(longitude))
                 {
+                    Console.WriteLine($"GNGGA invalid fix or missing lat/lon: '{message}'");
                     return;
                 }
 
@@ -239,6 +240,10 @@
                         latDegrees = -latDegrees;
                     }
                 }
+                else
+                {
+                    Console.WriteLine($"GNGGA invalid latitude: '{latitude}' in '{message}'");
+                }
 
                 if (longitude.Length >= 3 &&
                     int.TryParse(longitude.Substring(0, 3), out int lonDeg) &&
@@ -249,6 +254,10 @@
                     {
                         lonDegrees = -lonDegrees;
                     }
+                }
+                else
+                {
+                    Console.WriteLine($"GNGGA invalid longitude: '{longitude}' in '{message}'");
                 }
 
                 var newData = new GpsData
@@ -261,16 +270,15 @@
                     HDOP = hdop,
                     Altitude = altitude,
                     SpeedKmh = _lastSpeedKmh,
-                    IsValid = true
+                    IsValid = !string.IsNullOrEmpty(fixQuality) && fixQuality != "0" && latDegrees != 0 && lonDegrees != 0
                 };
 
                 this.LastGpsData = newData;
-
                 _errorCount = 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error parsing GNGGA message: " + ex.Message);
+                Console.WriteLine($"Error parsing GNGGA message: {ex.Message}\n{ex.StackTrace}");
                 _errorCount++;
             }
         }
@@ -280,23 +288,26 @@
             try
             {
                 string[] parts = message.Split(',');
-                if (parts.Length < 9)
+                if (parts.Length < 8)
                 {
-                    Console.WriteLine("Invalid GNVTG message format");
+                    Console.WriteLine($"GNVTG message too short: '{message}'");
                     return;
                 }
 
                 string speedKmhStr = parts[7];
                 if (!string.IsNullOrEmpty(speedKmhStr))
                 {
-                    double.TryParse(speedKmhStr, out _lastSpeedKmh);
+                    if (!double.TryParse(speedKmhStr, out _lastSpeedKmh))
+                    {
+                        Console.WriteLine($"GNVTG invalid speed: '{speedKmhStr}' in '{message}'");
+                    }
                 }
 
                 _errorCount = 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error parsing GNVTG message: " + ex.Message);
+                Console.WriteLine($"Error parsing GNVTG message: {ex.Message}\n{ex.StackTrace}");
                 _errorCount++;
             }
         }

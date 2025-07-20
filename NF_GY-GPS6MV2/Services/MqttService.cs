@@ -6,7 +6,7 @@
 
     using nanoFramework.M2Mqtt;
 
-    public class MqttService
+    public class MqttService : IDisposable
     {
         private MqttClient _client;
         private readonly string _brokerAddress;
@@ -17,8 +17,14 @@
         private bool _isReconnecting = false;
         private int _reconnectAttempts = 0;
         private const int MaxReconnectAttempts = 3;
+        private const int ReconnectIntervalMs = 60000;
+        private readonly object _syncLock = new object();
+        private bool _disposed = false;
 
-        public bool IsConnected => _client != null && _client.IsConnected;
+        public bool IsConnected
+        {
+            get { lock (_syncLock) { return _client != null && _client.IsConnected; } }
+        }
 
         /// <summary> 
         /// Initializes a new instance of the <see cref="MqttService"/> class. 
@@ -35,81 +41,87 @@
             _pass = pass;
 
             this.Connect();
-
-            _reconnectTimer = new Timer(this.CheckConnection, null, 60000, 60000);
+            _reconnectTimer = new Timer(CheckConnection, null, ReconnectIntervalMs, ReconnectIntervalMs);
         }
 
         private void CheckConnection(object state)
         {
-            if (_isReconnecting) return;
-
-            if (_client == null || !_client.IsConnected)
+            if (_isReconnecting)
             {
-                _isReconnecting = true;
+                return;
+            }
 
-                try
+            lock (_syncLock)
+            {
+                if (_client == null || !_client.IsConnected)
                 {
-                    Console.WriteLine("Connection check: MQTT client disconnected. Attempting to reconnect...");
-                    this.Connect();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Reconnection failed: {ex.Message}");
-                }
+                    _isReconnecting = true;
+                    try
+                    {
+                        Console.WriteLine("Connection check: MQTT client disconnected. Attempting to reconnect...");
+                        this.Connect();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Reconnection failed: {ex.Message}\n{ex.StackTrace}");
+                    }
 
-                _isReconnecting = false;
+                    _isReconnecting = false;
+                }
             }
         }
 
         private void Connect()
         {
-            _reconnectAttempts = 0;
-
-            while (_reconnectAttempts < MaxReconnectAttempts)
+            lock (_syncLock)
             {
-                try
+                _reconnectAttempts = 0;
+                while (_reconnectAttempts < MaxReconnectAttempts)
                 {
-                    if (_client != null)
+                    try
                     {
-                        try
+                        if (_client != null)
                         {
-                            if (_client.IsConnected)
+                            try
                             {
-                                _client.Disconnect();
+                                if (_client.IsConnected)
+                                {
+                                    _client.Disconnect();
+                                }
                             }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Error during disconnect: {ex.Message}\n{ex.StackTrace}");
+                            }
+
+                            _client = null;
                         }
-                        catch { /* Ignore */ }
 
-                        _client = null;
-                    }
+                        Thread.Sleep(100);
+                        _client = new MqttClient(_brokerAddress);
+                        _client.Connect(_clientId, _user, _pass);
 
-                    Thread.Sleep(100);
+                        if (_client.IsConnected)
+                        {
+                            Console.WriteLine("Connected to MQTT broker: " + _brokerAddress);
+                            _reconnectAttempts = 0;
+                            return;
+                        }
 
-                    _client = new MqttClient(_brokerAddress);
-                    _client.Connect(_clientId, _user, _pass);
-
-                    if (_client.IsConnected)
-                    {
-                        Console.WriteLine("Connected to MQTT broker: " + _brokerAddress);
-                        _reconnectAttempts = 0;
-                        return;
-                    }
-                    else
-                    {
                         Console.WriteLine("MQTT connection failed");
+                        this._reconnectAttempts++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Error connecting to MQTT: " + ex.Message + "\n" + ex.StackTrace);
                         _reconnectAttempts++;
                     }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Error connecting to MQTT: " + ex.Message);
-                    _reconnectAttempts++;
+
+                    Thread.Sleep(5000);
                 }
 
-                Thread.Sleep(5000);
+                Console.WriteLine("Maximum reconnection attempts reached. Will try again later.");
             }
-
-            Console.WriteLine("Maximum reconnection attempts reached. Will try again later.");
         }
 
         /// <summary> 
@@ -120,35 +132,37 @@
         /// <returns>True if published successfully, false otherwise</returns> 
         public bool Publish(string topic, string message)
         {
-            if (_client == null || !_client.IsConnected)
+            lock (_syncLock)
             {
-                Console.WriteLine("MQTT client not connected. Attempting to reconnect...");
-
-                try
+                if (_client == null || !_client.IsConnected)
                 {
-                    Connect();
-
-                    if (!this.IsConnected)
+                    Console.WriteLine("MQTT client not connected. Attempting to reconnect...");
+                    try
                     {
+                        this.Connect();
+                        if (!this.IsConnected)
+                        {
+                            return false;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error during reconnect in Publish: {ex.Message}\n{ex.StackTrace}");
                         return false;
                     }
                 }
-                catch
+
+                try
                 {
+                    _client.Publish(topic, Encoding.UTF8.GetBytes(message));
+                    Console.WriteLine($"Published to {topic}: {message}");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error publishing to MQTT: " + ex.Message + "\n" + ex.StackTrace);
                     return false;
                 }
-            }
-
-            try
-            {
-                _client.Publish(topic, Encoding.UTF8.GetBytes(message));
-                Console.WriteLine($"Published to {topic}: {message}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Error publishing to MQTT: " + ex.Message);
-                return false;
             }
         }
 
@@ -157,21 +171,38 @@
         /// </summary>
         public void Stop()
         {
-            if (_reconnectTimer != null)
-            {
-                _reconnectTimer.Dispose();
-                _reconnectTimer = null;
-            }
+            this.Dispose();
+        }
 
-            if (_client != null && _client.IsConnected)
+        public void Dispose()
+        {
+            if (_disposed) return;
+            lock (_syncLock)
             {
-                try
+                if (_reconnectTimer != null)
                 {
-                    _client.Disconnect();
+                    _reconnectTimer.Dispose();
+                    _reconnectTimer = null;
                 }
-                catch { }
 
-                _client = null;
+                if (_client != null)
+                {
+                    try
+                    {
+                        if (_client.IsConnected)
+                        {
+                            _client.Disconnect();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error during Dispose disconnect: {ex.Message}\n{ex.StackTrace}");
+                    }
+
+                    _client = null;
+                }
+
+                _disposed = true;
             }
         }
     }
