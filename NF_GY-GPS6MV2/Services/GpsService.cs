@@ -1,12 +1,15 @@
 ﻿namespace NF_GY_GPS6MV2.Services
 {
     using System;
+    using System.IO;
     using System.IO.Ports;
     using System.Threading;
 
     using nanoFramework.Hardware.Esp32;
+    using nanoFramework.Json;
 
     using NF_GY_GPS6MV2.Models;
+    using static NF_GY_GPS6MV2.AppSettings;
 
     public class GpsService : IDisposable
     {
@@ -19,6 +22,7 @@
         private const int ERROR_RESET_INTERVAL = 60000;
         private Timer _errorResetTimer;
         private double _lastSpeedKmh = 0;
+        private const string LAST_GPS_FILE = StorageRoot + "\\last_gps.txt";
 
         public GpsData LastGpsData { get; private set; }
 
@@ -40,6 +44,8 @@
             _serialPort.DataReceived += this.SerialPort_DataReceived;
 
             _errorResetTimer = new Timer(this.ResetErrorCount, null, ERROR_RESET_INTERVAL, ERROR_RESET_INTERVAL);
+
+            this.LoadLastGpsData();
         }
 
         private void ResetErrorCount(object state)
@@ -275,6 +281,7 @@
 
                 this.LastGpsData = newData;
                 _errorCount = 0;
+                this.SaveLastGpsData();
             }
             catch (Exception ex)
             {
@@ -331,6 +338,56 @@
             catch (Exception ex)
             {
                 Console.WriteLine($"Error resetting GPS service: {ex.Message}");
+            }
+        }
+
+        private void SaveLastGpsData()
+        {
+            try
+            {
+                if (LastGpsData != null && LastGpsData.IsValid)
+                {
+                    var json = JsonConvert.SerializeObject(LastGpsData);
+                    using (var fs = new FileStream(LAST_GPS_FILE, FileMode.Create))
+                    using (var sw = new StreamWriter(fs))
+                    {
+                        sw.Write(json);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving last GPS data: {ex.Message}");
+            }
+        }
+
+        private void LoadLastGpsData()
+        {
+            try
+            {
+                if (!File.Exists(LAST_GPS_FILE))
+                {
+                    Console.WriteLine("No last GPS data file, skipping load.");
+                    return;
+                }
+
+                using (var fs = new FileStream(LAST_GPS_FILE, FileMode.Open))
+                using (var sr = new StreamReader(fs))
+                {
+                    var json = sr.ReadToEnd();
+                    if (!string.IsNullOrEmpty(json))
+                    {
+                        var data = JsonConvert.DeserializeObject(json, typeof(GpsData)) as GpsData;
+                        if (data != null)
+                        {
+                            LastGpsData = data;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading last GPS data: {ex.Message}");
             }
         }
 
