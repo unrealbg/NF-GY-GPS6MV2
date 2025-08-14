@@ -1,6 +1,7 @@
 ﻿namespace NF_GY_GPS6MV2.Services
 {
     using System;
+    using System.Globalization;
     using System.IO;
     using System.IO.Ports;
     using System.Threading;
@@ -24,7 +25,45 @@
         private double _lastSpeedKmh = 0;
         private const string LAST_GPS_FILE = StorageRoot + "\\last_gps.txt";
 
-        public GpsData LastGpsData { get; private set; }
+        private readonly object _dataLock = new object();
+        private GpsData _lastGpsData;
+        public GpsData LastGpsData
+        {
+            get
+            {
+                lock (_dataLock)
+                {
+                    return _lastGpsData;
+                }
+            }
+        }
+
+        private static bool TryParseDoubleCultureAware(string s, out double value)
+        {
+            try
+            {
+                char ds = NumberFormatInfo.CurrentInfo.NumberDecimalSeparator[0];
+                if (ds != '.')
+                {
+                    char[] chars = s.ToCharArray();
+                    for (int i = 0; i < chars.Length; i++)
+                    {
+                        if (chars[i] == '.')
+                        {
+                            chars[i] = ds;
+                        }
+                    }
+                    s = new string(chars);
+                }
+                value = double.Parse(s);
+                return true;
+            }
+            catch
+            {
+                value = 0;
+                return false;
+            }
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="GpsService"/> class.
@@ -101,7 +140,7 @@
                 if (string.IsNullOrEmpty(data))
                 {
                     return;
-                } 
+                }
 
                 _buffer += data;
 
@@ -147,7 +186,23 @@
                     break;
                 }
 
-                int endIndex = _buffer.IndexOf('\r', startIndex);
+                // Support CR or LF as sentence terminators
+                int endCR = _buffer.IndexOf('\r', startIndex);
+                int endLF = _buffer.IndexOf('\n', startIndex);
+                int endIndex = -1;
+                if (endCR >= 0 && endLF >= 0)
+                {
+                    endIndex = endCR < endLF ? endCR : endLF;
+                }
+                else if (endCR >= 0)
+                {
+                    endIndex = endCR;
+                }
+                else if (endLF >= 0)
+                {
+                    endIndex = endLF;
+                }
+
                 if (endIndex < 0)
                 {
                     if (startIndex > 0)
@@ -161,7 +216,11 @@
                 if (endIndex - startIndex > 5 && endIndex - startIndex < MAX_BUFFER_SIZE)
                 {
                     string message = _buffer.Substring(startIndex, endIndex - startIndex);
-                    this.SafeProcessMessage(message);
+
+                    if (IsValidNmeaChecksum(message))
+                    {
+                        this.SafeProcessMessage(message);
+                    }
                 }
 
                 if (endIndex + 1 < _buffer.Length)
@@ -173,6 +232,35 @@
                     _buffer = string.Empty;
                     break;
                 }
+            }
+        }
+
+        private static bool IsValidNmeaChecksum(string sentence)
+        {
+            int starPos = sentence.IndexOf('*');
+            if (starPos <= 0)
+            {
+                // No checksum present; accept for tolerance
+                return true;
+            }
+
+            int checksum = 0;
+            for (int i = 1; i < starPos; i++)
+            {
+                checksum ^= sentence[i];
+            }
+
+            string hex = sentence.Substring(starPos + 1);
+            if (hex.Length < 2) return false;
+
+            try
+            {
+                int parsed = Convert.ToInt32(hex.Substring(0, 2), 16);
+                return checksum == parsed;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -196,13 +284,17 @@
                 return;
             }
 
-            if (message.StartsWith("$GNGGA"))
+            if (message.StartsWith("$GNGGA") || message.StartsWith("$GPGGA"))
             {
                 this.ParseGNGGA(message);
             }
-            else if (message.StartsWith("$GNVTG"))
+            else if (message.StartsWith("$GNVTG") || message.StartsWith("$GPVTG"))
             {
                 this.ParseGNVTG(message);
+            }
+            else if (message.StartsWith("$GNRMC") || message.StartsWith("$GPRMC"))
+            {
+                this.ParseGNRMC(message);
             }
         }
 
@@ -236,9 +328,11 @@
                 double latDegrees = 0;
                 double lonDegrees = 0;
 
-                if (latitude.Length >= 2 &&
-                    int.TryParse(latitude.Substring(0, 2), out int latDeg) &&
-                    double.TryParse(latitude.Substring(2), out double latMin))
+                int latDeg = 0;
+                double latMin = 0;
+                bool okLatDeg = int.TryParse(latitude.Length >= 2 ? latitude.Substring(0, 2) : string.Empty, out latDeg);
+                bool okLatMin = TryParseDoubleCultureAware(latitude.Length > 2 ? latitude.Substring(2) : string.Empty, out latMin);
+                if (latitude.Length >= 4 && okLatDeg && okLatMin)
                 {
                     latDegrees = latDeg + latMin / 60.0;
                     if (latDir == "S")
@@ -251,9 +345,11 @@
                     Console.WriteLine($"GNGGA invalid latitude: '{latitude}' in '{message}'");
                 }
 
-                if (longitude.Length >= 3 &&
-                    int.TryParse(longitude.Substring(0, 3), out int lonDeg) &&
-                    double.TryParse(longitude.Substring(3), out double lonMin))
+                int lonDeg = 0;
+                double lonMin = 0;
+                bool okLonDeg = int.TryParse(longitude.Length >= 3 ? longitude.Substring(0, 3) : string.Empty, out lonDeg);
+                bool okLonMin = TryParseDoubleCultureAware(longitude.Length > 3 ? longitude.Substring(3) : string.Empty, out lonMin);
+                if (longitude.Length >= 5 && okLonDeg && okLonMin)
                 {
                     lonDegrees = lonDeg + lonMin / 60.0;
                     if (lonDir == "W")
@@ -276,10 +372,14 @@
                     HDOP = hdop,
                     Altitude = altitude,
                     SpeedKmh = _lastSpeedKmh,
-                    IsValid = !string.IsNullOrEmpty(fixQuality) && fixQuality != "0" && latDegrees != 0 && lonDegrees != 0
+                    IsValid = !string.IsNullOrEmpty(fixQuality) && fixQuality != "0" && latDegrees != 0 && lonDegrees != 0,
+                    Date = DateTime.UtcNow
                 };
 
-                this.LastGpsData = newData;
+                lock (_dataLock)
+                {
+                    _lastGpsData = newData;
+                }
                 _errorCount = 0;
                 this.SaveLastGpsData();
             }
@@ -304,7 +404,12 @@
                 string speedKmhStr = parts[7];
                 if (!string.IsNullOrEmpty(speedKmhStr))
                 {
-                    if (!double.TryParse(speedKmhStr, out _lastSpeedKmh))
+                    double parsed;
+                    if (TryParseDoubleCultureAware(speedKmhStr, out parsed))
+                    {
+                        _lastSpeedKmh = parsed;
+                    }
+                    else
                     {
                         Console.WriteLine($"GNVTG invalid speed: '{speedKmhStr}' in '{message}'");
                     }
@@ -315,6 +420,64 @@
             catch (Exception ex)
             {
                 Console.WriteLine($"Error parsing GNVTG message: {ex.Message}\n{ex.StackTrace}");
+                _errorCount++;
+            }
+        }
+
+        private void ParseGNRMC(string message)
+        {
+            try
+            {
+                // RMC: $xxRMC,time,status,lat,NS,lon,EW,speedKnots,course,date,...
+                var parts = message.Split(',');
+                if (parts.Length < 10)
+                {
+                    Console.WriteLine($"GNRMC message too short: '{message}'");
+                    return;
+                }
+
+                string status = parts[2];
+                if (status != "A") // A=Active, V=Void
+                {
+                    return;
+                }
+
+                string time = parts[1]; // hhmmss.sss
+                string date = parts[9]; // ddmmyy
+
+                if (!string.IsNullOrEmpty(time) && time.Length >= 6 && !string.IsNullOrEmpty(date) && date.Length == 6)
+                {
+                    try
+                    {
+                        int hh = (time.Length >= 6) ? int.Parse(time.Substring(0, 2)) : 0;
+                        int mm = (time.Length >= 6) ? int.Parse(time.Substring(2, 2)) : 0;
+                        int ss = (time.Length >= 6) ? int.Parse(time.Substring(4, 2)) : 0;
+
+                        int day = int.Parse(date.Substring(0, 2));
+                        int month = int.Parse(date.Substring(2, 2));
+                        int year = 2000 + int.Parse(date.Substring(4, 2));
+
+                        DateTime utc = new DateTime(year, month, day, hh, mm, ss);
+
+                        lock (_dataLock)
+                        {
+                            if (_lastGpsData != null)
+                            {
+                                _lastGpsData.Date = utc;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error parsing RMC date/time: {ex.Message}");
+                    }
+                }
+
+                _errorCount = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error parsing GNRMC message: {ex.Message}\n{ex.StackTrace}");
                 _errorCount++;
             }
         }
@@ -345,9 +508,10 @@
         {
             try
             {
-                if (LastGpsData != null && LastGpsData.IsValid)
+                var snapshot = this.LastGpsData;
+                if (snapshot != null && snapshot.IsValid)
                 {
-                    var json = JsonConvert.SerializeObject(LastGpsData);
+                    var json = JsonConvert.SerializeObject(snapshot);
                     using (var fs = new FileStream(LAST_GPS_FILE, FileMode.Create))
                     using (var sw = new StreamWriter(fs))
                     {
@@ -380,7 +544,10 @@
                         var data = JsonConvert.DeserializeObject(json, typeof(GpsData)) as GpsData;
                         if (data != null)
                         {
-                            LastGpsData = data;
+                            lock (_dataLock)
+                            {
+                                _lastGpsData = data;
+                            }
                         }
                     }
                 }
