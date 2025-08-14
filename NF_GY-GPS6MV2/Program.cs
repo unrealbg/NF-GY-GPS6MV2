@@ -5,7 +5,6 @@
 
     using nanoFramework.Json;
 
-    using NF_GY_GPS6MV2.Models;
     using NF_GY_GPS6MV2.Services;
 
     using static AppSettings;
@@ -17,7 +16,6 @@
         private static GpsService _gpsService;
         private static Timer _repeatingTimer;
         private static ManualResetEvent _exitEvent = new ManualResetEvent(false);
-        private static readonly object _gpsDataLock = new object();
         private static int _gpsErrorPublishCounter = 0;
         private const int MaxGpsErrorPublishes = 5;
         private static DateTime _lastGpsErrorPublish = DateTime.MinValue;
@@ -27,6 +25,10 @@
             try
             {
                 Console.WriteLine("Starting GPS tracker...");
+
+                // Load config from storage before using settings
+                AppSettings.LoadFromStorage();
+
                 Thread.Sleep(GpsStartupDelayMs);
 
                 _connectionService = new ConnectionService();
@@ -60,11 +62,9 @@
             try
             {
                 _connectionService.CheckConnection();
-                GpsData data;
-                lock (_gpsDataLock)
-                {
-                    data = _gpsService.LastGpsData;
-                }
+
+                var data = _gpsService.LastGpsData;
+
                 if (data != null && data.IsValid)
                 {
                     string jsonData = JsonConvert.SerializeObject(data);
